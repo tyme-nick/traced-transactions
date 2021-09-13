@@ -83,4 +83,15 @@ describe('A function wrapped with beginTracedTransaction', function() {
         should.exist(insideTags['test-tag']);
         should(insideTags['test-tag']).equal('This is a test');
     });
+
+    it('should possess the provided service.name', async () => {
+        const serviceName = 'test-service';
+        let insideServiceName;
+
+        await beginTracedTransaction(serviceName, async () => {
+            insideServiceName = tracer.scope().active().context()._tags['service.name'];
+        });
+
+        should(serviceName).equal(insideServiceName);
+    });
 });
