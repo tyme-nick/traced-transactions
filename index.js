@@ -41,8 +41,24 @@ exports.beginTracedTransaction = beginTracedTransaction;
 async function resumeTracedTransaction(pickle, callback, options = {}) {
     const tags = options.tags ? options.tags : {};
     const segmentLabel = options.segmentLabel ? options.segmentLabel : 'default';
-    let parentSpanContext = _unpickleSpan(pickle);
-    const trxCorrelator = pickle.trx_correlator;
+    let isTransactionExists = false;
+    let parentSpanContext;
+    let trxCorrelator;
+
+    if (pickle) {
+        parentSpanContext = _unpickleSpan(pickle);
+        if (parentSpanContext) {
+            if (pickle.trxCorrelator) {
+                trxCorrelator = pickle.trxCorrelator;
+                isTransactionExists = true;
+            }
+        }
+    }
+
+    // Just pass through silently if this wasn't part of a transaction
+    if (! isTransactionExists) {
+        return await callback();
+    }
 
     return await tracer.trace(`transaction-segment-wrapper-${segmentLabel}`, async (spanWrapper) => {
         // If the wrapper sits inside the same transaction as the one we want to resume then don't disconnect from current trace
@@ -69,11 +85,11 @@ exports.resumeTracedTransaction = resumeTracedTransaction;
 function pickleActiveSpan() {
     const activeSpan = tracer.scope().active();
     const propagatedTags = _getPropagatedTags(activeSpan);
-    const serviceName = 'service.name' in propagatedTags ? propagatedTags['service.name'] : 'unknown';
-    const trx_correlator = 'trx-correlator' in propagatedTags ? propagatedTags['trx-correlator'] : null;
+    const serviceName = 'service.name' in propagatedTags ? propagatedTags['service.name'] : null;
+    const trxCorrelator = 'trx-correlator' in propagatedTags ? propagatedTags['trx-correlator'] : null;
     const pickle = {
         serviceName: serviceName,
-        trxCorrelator: trx_correlator,
+        trxCorrelator: trxCorrelator,
         datadog: {},
     };
     tracer.inject(tracer.scope().active(), 'text_map', pickle.datadog);
@@ -90,7 +106,12 @@ function _getPropagatedTags(spanSource) {
 }
 
 function _unpickleSpan(pickle) {
-    return tracer.extract('text_map', pickle.datadog);
+    if (pickle && pickle.datadog) {
+        return tracer.extract('text_map', pickle.datadog);
+    }
+    else {
+        return null;
+    }
 }
 
 function _propagateTags(spanTarget) {

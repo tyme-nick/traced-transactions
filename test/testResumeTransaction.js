@@ -42,6 +42,22 @@ describe('A function wrapped with resumeTracedTransaction', function() {
         should(begunTrxCorrelator).equal(resumedTrxCorrelator);
     });
 
+    it('should have the same service.name as the beginning transaction', async function() {
+        let pickle;
+        let serviceName = 'resume-test-service-name';
+        let resumedServiceName;
+
+        await beginTracedTransaction(serviceName, async () => {
+            pickle = pickleActiveSpan();
+        });
+
+        await resumeTracedTransaction(pickle, async() => {
+            resumedServiceName = tracer.scope().active().context()._tags['service.name']
+        })
+
+        should(serviceName).equal(resumedServiceName);
+    });
+
     it('should have a different seg-correlator to the beginning transaction', async function() {
         let pickle;
         let begunTags;
@@ -60,5 +76,46 @@ describe('A function wrapped with resumeTracedTransaction', function() {
         should.exist(begunTags['seg-correlator']);
         should.exist(resumedTags['seg-correlator']);
         should(begunTags['seg-correlator']).not.equal(resumedTags['seg-correlator']);
+    });
+
+    it('should silently pass through if there was no transaction', async function() {
+        const outsideTraceId = tracer.scope().active().context().toTraceId();
+        const outsideSpanId = tracer.scope().active().context().toSpanId();
+
+        let insideTraceId;
+        let insideSpanId;
+
+        await resumeTracedTransaction(null, async() => {
+            insideTraceId = tracer.scope().active().context().toTraceId();
+            insideSpanId = tracer.scope().active().context().toSpanId();
+        });
+
+        should(outsideTraceId).equal(insideTraceId);
+        should(outsideSpanId).equal(insideSpanId);
+    });
+
+    it('should do nothing if resuming a non-transaction', async function() {
+        const firstTraceId = tracer.scope().active().context().toTraceId();
+        let secondTraceId;
+        let thirdTraceId;
+
+        const pickle = pickleActiveSpan();
+        const spanWrapper = tracer.startSpan('wrapper');
+        
+        try {
+            await tracer.scope().activate(spanWrapper, async () => {
+                secondTraceId = tracer.scope().active().context().toTraceId();
+
+                await resumeTracedTransaction(pickle, async () => {
+                    thirdTraceId = tracer.scope().active().context().toTraceId();
+                });
+            });
+        }
+        finally {
+            spanWrapper.finish();
+        }
+
+        should(thirdTraceId).equal(secondTraceId);
+        should(thirdTraceId).not.equal(firstTraceId);
     });
 });
