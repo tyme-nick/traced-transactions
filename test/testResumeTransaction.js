@@ -2,7 +2,7 @@
 
 const tracer = require('dd-trace').init();
 const { beginTracedTransaction, resumeTracedTransaction, pickleActiveSpan } = require('../index');
-require('should');
+const { expect, should} = require('chai');
 
 describe('A function wrapped with resumeTracedTransaction', function() {
     it('should have the same traceId as the beginning transaction', async function() {
@@ -19,7 +19,7 @@ describe('A function wrapped with resumeTracedTransaction', function() {
             resumedTraceId = tracer.scope().active().context().toTraceId();
         })
 
-        should(begunTraceId).equal(resumedTraceId);
+        expect(begunTraceId).to.equal(resumedTraceId);
     });
 
     it('should have the same trx-correlator as the beginning transaction', async function() {
@@ -39,7 +39,7 @@ describe('A function wrapped with resumeTracedTransaction', function() {
             resumedTrxCorrelator = baggageItems['trx-correlator'];
         })
 
-        should(begunTrxCorrelator).equal(resumedTrxCorrelator);
+        expect(begunTrxCorrelator).to.equal(resumedTrxCorrelator);
     });
 
     it('should have the same service.name as the beginning transaction', async function() {
@@ -55,7 +55,7 @@ describe('A function wrapped with resumeTracedTransaction', function() {
             resumedServiceName = tracer.scope().active().context()._tags['service.name']
         })
 
-        should(serviceName).equal(resumedServiceName);
+        expect(serviceName).to.equal(resumedServiceName);
     });
 
     it('should have a different seg-correlator to the beginning transaction', async function() {
@@ -73,9 +73,9 @@ describe('A function wrapped with resumeTracedTransaction', function() {
             resumedTags = tracer.scope().active().context()._tags;
         })
 
-        should.exist(begunTags['seg-correlator']);
-        should.exist(resumedTags['seg-correlator']);
-        should(begunTags['seg-correlator']).not.equal(resumedTags['seg-correlator']);
+        should().exist(begunTags['seg-correlator']);
+        should().exist(resumedTags['seg-correlator']);
+        expect(begunTags['seg-correlator']).to.not.equal(resumedTags['seg-correlator']);
     });
 
     it('should silently pass through if there was no transaction', async function() {
@@ -90,8 +90,8 @@ describe('A function wrapped with resumeTracedTransaction', function() {
             insideSpanId = tracer.scope().active().context().toSpanId();
         });
 
-        should(outsideTraceId).equal(insideTraceId);
-        should(outsideSpanId).equal(insideSpanId);
+        expect(outsideTraceId).to.equal(insideTraceId);
+        expect(outsideSpanId).to.equal(insideSpanId);
     });
 
     it('should do nothing if resuming a non-transaction', async function() {
@@ -115,7 +115,22 @@ describe('A function wrapped with resumeTracedTransaction', function() {
             spanWrapper.finish();
         }
 
-        should(thirdTraceId).equal(secondTraceId);
-        should(thirdTraceId).not.equal(firstTraceId);
+        expect(thirdTraceId).to.equal(secondTraceId);
+        expect(thirdTraceId).to.not.equal(firstTraceId);
+    });
+
+    it('should return the value of the callback function', async () => {
+        let pickle;
+        async function testfunc() {
+            return 42;
+        }
+
+        await beginTracedTransaction('test-service', async () => {
+            pickle = pickleActiveSpan();
+        });
+
+        const testval = await resumeTracedTransaction(pickle, testfunc);
+
+        expect(testval).to.equal(42);
     });
 });
