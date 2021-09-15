@@ -20,6 +20,10 @@ const PROPAGATED_TAGS_KEY = `${VENDOR_PREFIX}propagated-tags`;
  * This function wraps a callback inside an orphaned trace
  */
 async function beginTracedTransaction(serviceName, callback, options = {}) {
+    if (! _isTracerRunning()) {
+        return await callback();
+    }
+
     const spanBootstrap = _generateTransactionBootstrap(serviceName, options);
 
     // the purpose of the wrapper span is to form a correlation between the active span and the newly created one
@@ -39,6 +43,10 @@ async function beginTracedTransaction(serviceName, callback, options = {}) {
 exports.beginTracedTransaction = beginTracedTransaction;
 
 async function resumeTracedTransaction(pickle, callback, options = {}) {
+    if (! _isTracerRunning()) {
+        return await callback();
+    }
+
     const tags = options.tags ? options.tags : {};
     const segmentLabel = options.segmentLabel ? options.segmentLabel : 'default';
     let isTransactionExists = false;
@@ -63,7 +71,7 @@ async function resumeTracedTransaction(pickle, callback, options = {}) {
     return await tracer.trace(`transaction-segment-wrapper-${segmentLabel}`, async (spanWrapper) => {
         // If the wrapper sits inside the same transaction as the one we want to resume then don't disconnect from current trace
         const wrapperPropagatedTags = _getPropagatedTags(spanWrapper);
-        if (wrapperPropagatedTags && 'trx-correlator' in wrapperPropagatedTags && wrapperPropagatedTags['wrapperPropagatedTags'] == trxCorrelator) {
+        if (wrapperPropagatedTags && 'trx-correlator' in wrapperPropagatedTags && wrapperPropagatedTags['trx-correlator'] == trxCorrelator) {
             parentSpanContext = spanWrapper;
         }
 
@@ -83,6 +91,10 @@ async function resumeTracedTransaction(pickle, callback, options = {}) {
 exports.resumeTracedTransaction = resumeTracedTransaction;
 
 function pickleActiveSpan() {
+    if (! _isTracerRunning()) {
+        return null;
+    }
+
     const activeSpan = tracer.scope().active();
     const propagatedTags = _getPropagatedTags(activeSpan);
     const serviceName = 'service.name' in propagatedTags ? propagatedTags['service.name'] : null;
@@ -121,6 +133,10 @@ function _propagateTags(spanTarget) {
         spanTarget.setTag(tag, propagatedTags[tag]);
     }
 
+    // this should really already be set
+    if ('service.name' in propagatedTags) {
+        spanTarget.setTag('service', propagatedTags['service.name']);
+    }
 }
 
 function _ensureBootstrapCorrelation(spanWrapper, spanBootstrap) {
@@ -184,10 +200,17 @@ function _generateTransactionBootstrap(serviceName, options = {}) {
     // the service.name is set again here to override any sneakiness using tags
 
     spanBootstrap.setTag('service.name', serviceName);
+    spanBootstrap.setTag('service', serviceName); // override Datadog on this one
     spanBootstrap.setTag('resource.name', 'transaction-bootstrap');
     
     const propagatedTagsString = JSON.stringify(propagatedTags);
     spanBootstrap.setBaggageItem(PROPAGATED_TAGS_KEY, propagatedTagsString);
 
     return spanBootstrap;
+}
+
+function _isTracerRunning() {
+    const activeSpan = tracer.scope().active();
+
+    return activeSpan ? true : false;
 }
