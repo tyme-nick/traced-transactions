@@ -1,7 +1,9 @@
 'use strict';
 
-const tracer = require('dd-trace').init();
-const { beginTracedTransaction } = require('../index');
+const rewire = require('rewire');
+const tracer = require('dd-trace');
+const tracedTransactions = rewire('../index');
+const { beginTracedTransaction } = tracedTransactions;
 const { expect, should } = require('chai');
 
 describe('A function wrapped with beginTracedTransaction', function() {
@@ -16,6 +18,30 @@ describe('A function wrapped with beginTracedTransaction', function() {
         });
 
         expect(insideTraceId).to.not.equal(outsideTraceId);
+    });
+
+    it('should simply call the callback if tracing is off', async () => {
+        function alwaysFalse() {
+            return false;
+        }
+
+        const originalFunction = tracedTransactions.__get__('_isTracerRunning');
+        
+
+        const outsideSpanId = tracer.scope().active().context()._spanId.toString(10);
+        let insideSpanId;
+
+        tracedTransactions.__set__('_isTracerRunning', alwaysFalse);
+        try {
+            await beginTracedTransaction('test-service', () => {
+                insideSpanId = tracer.scope().active().context()._spanId.toString(10);
+            });
+        }
+        finally {
+            tracedTransactions.__set__('_isTracerRunning', originalFunction);
+        }
+
+        expect(outsideSpanId).to.equal(insideSpanId);
     });
 
     it('should have a trxCorrelator', async function() {
@@ -77,6 +103,21 @@ describe('A function wrapped with beginTracedTransaction', function() {
         should().exist(insideTags['test-tag']);
         expect(insideTags['test-tag']).to.equal('This is a test');
     });
+
+    it('should possess the provided baggage items', async () => {
+        const options = {
+            baggageItems: {
+                'test': 'value',
+            },
+        };
+
+        let internalBaggageItemTest;
+        await beginTracedTransaction('test-service', async () => {
+            internalBaggageItemTest = tracer.scope().active().getBaggageItem('test');
+        }, options);
+
+        expect(internalBaggageItemTest).to.equal('value');
+    })
 
     it('should possess the provided service.name', async () => {
         const serviceName = 'test-service';

@@ -1,7 +1,9 @@
 'use strict';
 
-const tracer = require('dd-trace').init();
-const { beginTracedTransaction, resumeTracedTransaction, pickleActiveSpan } = require('../index');
+const rewire = require('rewire');
+const tracer = require('dd-trace');
+const tracedTransactions = rewire('../index');
+const { beginTracedTransaction, resumeTracedTransaction, pickleActiveSpan } = tracedTransactions;
 const { expect, should} = require('chai');
 
 describe('A function wrapped with resumeTracedTransaction', function() {
@@ -20,6 +22,53 @@ describe('A function wrapped with resumeTracedTransaction', function() {
         })
 
         expect(begunTraceId).to.equal(resumedTraceId);
+    });
+
+    it('should simply call the callback if tracing is off', async () => {
+        function alwaysFalse() {
+            return false;
+        }
+
+        const originalFunction = tracedTransactions.__get__('_isTracerRunning');
+        
+
+        const outsideSpanId = tracer.scope().active().context()._spanId.toString(10);
+        let insideSpanId;
+
+        let pickle;
+        await beginTracedTransaction('test-service', () => {
+            pickle = pickleActiveSpan();
+        });
+
+        tracedTransactions.__set__('_isTracerRunning', alwaysFalse);
+
+        try {
+            await resumeTracedTransaction(null, () => {
+                insideSpanId = tracer.scope().active().context()._spanId.toString(10);
+            });
+        }
+        finally {
+            tracedTransactions.__set__('_isTracerRunning', originalFunction);
+        }
+
+        expect(outsideSpanId).to.equal(insideSpanId);
+    });
+
+    it('should have a parent equal to the resumed span', async function() {
+        let pickle;
+        let begunSpanId;
+        let resumedParentSpanId;
+
+        await beginTracedTransaction('test', async () => {
+            begunSpanId = tracer.scope().active().context()._spanId.toString(10);
+            pickle = pickleActiveSpan();
+        });
+
+        await resumeTracedTransaction(pickle, async() => {
+            resumedParentSpanId = tracer.scope().active().context()._parentId.toString(10);
+        })
+
+        expect(begunSpanId).to.equal(resumedParentSpanId);
     });
 
     it('should have the same trx-correlator as the beginning transaction', async function() {
@@ -131,6 +180,57 @@ describe('A function wrapped with resumeTracedTransaction', function() {
 
         const testval = await resumeTracedTransaction(pickle, testfunc);
 
+        expect(testval).to.equal(42);
+    });
+
+    it('should continue an existing transaction if it is the same transaction', async () => {
+        // I can't think of any way to test this apart from looking at the debugger
+        let beginSpan;
+        let resumeParentSpan;
+
+        await beginTracedTransaction('test-service', async () => {
+            const pickle = pickleActiveSpan();
+            beginSpan = tracer.scope().active().context()._spanId.toString(10);
+
+            await resumeTracedTransaction(pickle, async () => {
+                resumeParentSpan = tracer.scope().active().context()._parentId.toString(10);
+            });
+        });
+
+        expect(beginSpan).to.not.equal(resumeParentSpan);
+    });
+
+    it('should set the desired tags', async () => {
+        let options = {
+            tags: {
+                'test-tag': 'test-value',
+            },
+        };
+
+        let pickle;
+        let resumedSpanTags;
+
+        await beginTracedTransaction('test-service', async () => {
+            pickle = pickleActiveSpan();
+        });
+
+        await resumeTracedTransaction(pickle, async () => {
+            resumedSpanTags = tracer.scope().active().context()._tags;
+        }, options);
+
+        expect(resumedSpanTags['test-tag']).to.equal('test-value');
+    });
+
+    it('should do nothing if the pickle is null', async () => {
+        const outsideSpanId = tracer.scope().active().context().toSpanId();
+        let insideSpanId;
+
+        const testval = await resumeTracedTransaction(null, async () => {
+            insideSpanId = tracer.scope().active().context().toSpanId();
+            return 42;
+        });
+
+        expect(outsideSpanId).to.equal(insideSpanId);
         expect(testval).to.equal(42);
     });
 });
